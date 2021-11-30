@@ -32,7 +32,7 @@ Jinja2 = ">=2.11.3,<4.0.0"
 black = "^21.11b1"
 codespell = "^2.1.0"
 flake8 = "^4.0.1"
-flake8-bugbear = "^21.9.2"
+flake8-bugbear = "^21.11.29"
 flake8-comprehensions = "^3.7.0"
 flake8-docstrings = "^1.6.0"
 flake8-simplify = "^0.14.2"
@@ -63,10 +63,12 @@ max-line-length = 88
 [tool.pylint.messages_control]
 # Reasons disabled:
 # duplicate-code - unavoidable
+# invalid-unary-operand-type - buggy, mypy is enough. See PyCQA/pylint#1472
 # too-many-* - not enforced for the sake of readability
 # too-few-* - same as too-many-*
 disable = [
     "duplicate-code",
+    "invalid-unary-operand-type",
     "too-few-public-methods",
     "too-many-arguments",
     "too-many-branches",
