@@ -185,10 +185,12 @@ def parse_trades(
             action = ActionType.BUY
         elif tpe == "Sell":
             action = ActionType.SELL
-        elif tpe == "Split":
-            action = ActionType.STOCK_SPLIT
+        elif tpe in ("Split", "Bonus"):
+            action = ActionType.ADJUSTMENT
         elif tpe == "Cancellation":
-            action = ActionType.SELL
+            action = ActionType.PAYOUT
+        elif tpe == "Merge":
+            action = ActionType.MERGE
         else:
             raise ValueError(f"Unknown action: {tpe}")
 
@@ -210,6 +212,7 @@ def parse_trades(
         description = row_dict["Comments"]
         broker = "Sharesight"
         gbp_value = maybe_decimal(row_dict, "Value")
+
 
         # Sharesight's reports conventions are slightly different from our
         # conventions:
