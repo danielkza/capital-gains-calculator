@@ -204,14 +204,8 @@ def read_schwab_transactions(
                     " with 8 columns",
                 )
 
-            if "Total" not in lines[-1][0]:
-                raise ParsingError(
-                    transactions_file,
-                    "Last line of Schwab transactions file must be total",
-                )
-
-            # Remove headers and footer
-            lines = lines[1:-1]
+            # Remove header
+            lines = lines[1:]
             transactions = [
                 SchwabTransaction.create(row, transactions_file, awards_prices)
                 for row in lines
@@ -237,7 +231,7 @@ def _read_schwab_awards(
             ) as csv_file:
                 lines = list(csv.reader(csv_file))
                 # Remove headers
-                lines = lines[2:]
+                lines = lines[1:]
         except FileNotFoundError:
             print(
                 "WARNING: Couldn't locate Schwab award "
@@ -246,25 +240,25 @@ def _read_schwab_awards(
     else:
         print("WARNING: No schwab award file provided")
 
-    modulo = len(lines) % 3
+    modulo = len(lines) % 2
     if modulo != 0:
         raise UnexpectedRowCountError(
-            len(lines) - modulo + 3, schwab_award_transactions_file or ""
+            len(lines) - modulo + 2, schwab_award_transactions_file or ""
         )
 
-    for row in zip(lines[::3], lines[1::3], lines[2::3]):
-        if len(row) != 3:
+    for row in zip(lines[::2], lines[1::2]):
+        if len(row) != 2:
             raise UnexpectedColumnCountError(
-                list(itertools.chain(*row)), 3, schwab_award_transactions_file or ""
+                list(itertools.chain(*row)), 2, schwab_award_transactions_file or ""
             )
 
-        lapse_main, _, lapse_data = row
+        lapse_main, lapse_data = row
 
-        if len(lapse_main) != 8:
+        if len(lapse_main) != 15:
             raise UnexpectedColumnCountError(
                 lapse_main, 8, schwab_award_transactions_file or ""
             )
-        if len(lapse_data) < 8 or len(lapse_data) > 9:
+        if len(lapse_data) != 15:
             raise UnexpectedColumnCountError(
                 lapse_data, 8, schwab_award_transactions_file or ""
             )
@@ -275,7 +269,7 @@ def _read_schwab_awards(
         except ValueError:
             date = datetime.datetime.strptime(date_str, "%m/%d/%Y").date()
         symbol = lapse_main[2] if lapse_main[2] != "" else None
-        price = Decimal(lapse_data[3].replace("$", "")) if lapse_data[3] != "" else None
+        price = Decimal(lapse_data[10].replace("$", "")) if lapse_data[10] != "" else None
         if symbol is not None and price is not None:
             symbol = TICKER_RENAMES.get(symbol, symbol)
             initial_prices[date][symbol] = price
