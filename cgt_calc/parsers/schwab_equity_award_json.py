@@ -1,12 +1,11 @@
 """Charles Schwab Equity Award JSON export parser.
 
 To get the data from Schwab:
-1. Open https://client.schwab.com/Apps/accounts/transactionhistory/#/
-2. Make sure Equity Award Center is selected
-3. Select date range ALL and click SEARCH
-4. In chrome devtools, look for an API call to
-   https://ausgateway.schwab.com/api/is.TransactionHistoryWeb/TransactionHistoryInterface/TransactionHistory/equity-award-center/transactions
-5. Copy response JSON inside schwab_input.json and run schwab.py
+1. Navigate to Equity Award Center
+2. Go to Statements
+3. Chose "All" for Period
+4. Click "Export"
+5. Choose JSON format
 """
 from __future__ import annotations
 
@@ -14,7 +13,7 @@ import datetime
 from decimal import Decimal
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, Sequence, Tuple
 
 from pandas.tseries.holiday import USFederalHolidayCalendar  # type: ignore
 from pandas.tseries.offsets import CustomBusinessDay  # type: ignore
@@ -23,6 +22,7 @@ from cgt_calc.const import TICKER_RENAMES
 from cgt_calc.exceptions import ParsingError
 from cgt_calc.model import ActionType, BrokerTransaction
 from cgt_calc.util import round_decimal, decimal_from_number_or_str, decimal_from_str
+
 
 # Delay between a (sale) trade, and when it is settled.
 SETTLEMENT_DELAY = 2 * CustomBusinessDay(calendar=USFederalHolidayCalendar())
@@ -58,7 +58,7 @@ def action_from_str(label: str) -> ActionType:
     }:
         return ActionType.TRANSFER
 
-    if label in {"Stock Plan Activity", "Deposit"}:
+    if label in {"Stock Plan Activity", "Deposit", "Lapse"}:
         return ActionType.STOCK_ACTIVITY
 
     if label in ["Qualified Dividend", "Cash Dividend"]:
@@ -97,7 +97,6 @@ def action_from_str(label: str) -> ActionType:
 def _is_integer(number: Decimal) -> bool:
     return number % 1 == 0
 
-
 class SchwabTransaction(BrokerTransaction):
     """Represent single Schwab transaction."""
 
@@ -131,11 +130,36 @@ class SchwabTransaction(BrokerTransaction):
             )
             if amount == Decimal(0):
                 amount = price * quantity
+
             description = (
                 f"Vest from Award Date "
                 f'{row["transactionDetails"][0]["awardDate"]} '
                 f'(ID {row["transactionDetails"][0]["awardName"]})'
             )
+        elif row["action"] == "Lapse":
+            if len(row["transactionDetails"]) != 1:
+                raise ParsingError(
+                    file,
+                    "Expected a single transactionDetails for a Lapse, but "
+                    f"found {len(row['transactionDetails'])}",
+                )
+            detail = row['transactionDetails'][0]['details']
+
+            date = datetime.datetime.strptime(row["date"], "%m/%d/%Y").date()
+            price = decimal_from_str(detail["fairMarketValuePrice"])
+            net = decimal_from_str(detail["netSharesDeposited"])
+            if net:
+                quantity = net
+
+            if amount == Decimal(0):
+                amount = price * quantity
+            award_desc = detail.get('awardName') or detail.get('awardId', '?')
+            description = (
+                f"Vest from Award Date "
+                f'{detail["awardDate"]} '
+                f'(ID {award_desc})'
+            )
+
         elif row["action"] == "Sale":
             # Schwab's data export shows the settlement date,
             # whereas HMRC wants the trade date:
@@ -206,13 +230,14 @@ class SchwabTransaction(BrokerTransaction):
             broker,
         )
 
-        self._normalize_split()
+        if symbol == 'GOOGL':
+            self._normalize_googl_split()
 
-    def _normalize_split(self) -> None:
+    def _normalize_googl_split(self) -> None:
         """Ensure past transactions are normalized to split values.
 
-        This is in the context of the 20:1 stock split which happened at close
-        on 2022-07-15 20:1.
+        This is in the context of the GOOGL 20:1 stock split which happened at
+        close on 2022-07-15 20:1.
 
         As of 2022-08-07, Schwab's data exports have some past transactions
         corrected for the 20:1 split on 2022-07-15, whereas others are not.
@@ -231,6 +256,11 @@ class SchwabTransaction(BrokerTransaction):
             self.quantity = round_decimal(self.quantity * split_factor, ROUND_DIGITS)
 
 
+def _lowercase_keys(pairs: Sequence[Tuple[str, Any]]) -> Dict[str, Any]:
+    return {
+        (k[0].lower() + k[1:]): v for (k, v) in pairs
+    }
+
 def read_schwab_equity_award_json_transactions(
     transactions_file: str,
 ) -> list[BrokerTransaction]:
@@ -238,7 +268,9 @@ def read_schwab_equity_award_json_transactions(
     try:
         with Path(transactions_file).open(encoding="utf-8") as json_file:
             try:
-                data = json.load(json_file, parse_float=Decimal, parse_int=Decimal)
+                data = json.load(
+                    json_file, parse_float=Decimal, parse_int=Decimal,
+                    object_pairs_hook=_lowercase_keys)
             except json.decoder.JSONDecodeError as exception:
                 raise ParsingError(
                     transactions_file,
@@ -259,6 +291,7 @@ def read_schwab_equity_award_json_transactions(
                 if transac["action"] not in {"Journal", "Wire Transfer"}
             ]
             transactions.reverse()
+
             return list(transactions)
     except FileNotFoundError:
         print(f"WARNING: Couldn't locate Schwab transactions file({transactions_file})")

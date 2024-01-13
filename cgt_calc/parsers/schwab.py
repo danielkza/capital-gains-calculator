@@ -7,7 +7,9 @@ from dataclasses import dataclass
 import datetime
 from decimal import Decimal
 import itertools
+import json
 from pathlib import Path
+from typing import Any, Sequence
 
 from cgt_calc.const import TICKER_RENAMES
 from cgt_calc.exceptions import (
@@ -17,6 +19,7 @@ from cgt_calc.exceptions import (
     UnexpectedRowCountError,
 )
 from cgt_calc.model import ActionType, BrokerTransaction
+from cgt_calc.util import decimal_from_number_or_str
 
 
 @dataclass
@@ -106,32 +109,30 @@ class SchwabTransaction(BrokerTransaction):
 
     def __init__(
         self,
-        row: list[str],
+        row: dict[str, Any],
         file: str,
     ):
         """Create transaction from CSV row."""
-        if len(row) < 8 or len(row) > 9:
-            # Old transactions had empty 9th column.
-            raise UnexpectedColumnCountError(row, 8, file)
-        if len(row) == 9 and row[8] != "":
-            raise ParsingError(file, "Column 9 should be empty")
+        if not FIELDS.issubset(row.keys()):
+            raise ParsingError(file, "Row is missing expected fields")
+
         as_of_str = " as of "
-        if as_of_str in row[0]:
-            index = row[0].find(as_of_str) + len(as_of_str)
-            date_str = row[0][index:]
+        if as_of_str in row["Date"]:
+            index = row["Date"].find(as_of_str) + len(as_of_str)
+            date_str = row["Date"][index:]
         else:
-            date_str = row[0]
+            date_str = row["Date"]
         date = datetime.datetime.strptime(date_str, "%m/%d/%Y").date()
-        self.raw_action = row[1]
+        self.raw_action = row["Action"]
         action = action_from_str(self.raw_action)
-        symbol = row[2] if row[2] != "" else None
+        symbol = row["Symbol"] if row["Symbol"] != "" else None
         if symbol is not None:
             symbol = TICKER_RENAMES.get(symbol, symbol)
-        description = row[3]
-        quantity = Decimal(row[4].replace(",", "")) if row[4] != "" else None
-        price = Decimal(row[5].replace("$", "")) if row[5] != "" else None
-        fees = Decimal(row[6].replace("$", "")) if row[6] != "" else Decimal(0)
-        amount = Decimal(row[7].replace("$", "")) if row[7] != "" else None
+        description = row["Description"]
+        quantity = decimal_from_number_or_str(row, "Quantity") if row["Quantity"] != "" else None
+        price = decimal_from_number_or_str(row, "Price") if row["Price"] != "" else None
+        fees = decimal_from_number_or_str(row, "Fees & Comm") if row["Fees & Comm"] != "" else Decimal(0)
+        amount = decimal_from_number_or_str(row, "Amount") if row["Amount"] != "" else None
 
         currency = "USD"
         broker = "Charles Schwab"
@@ -150,7 +151,7 @@ class SchwabTransaction(BrokerTransaction):
 
     @staticmethod
     def create(
-        row: list[str], file: str, awards_prices: AwardPrices
+        row: dict[str, Any], file: str, awards_prices: AwardPrices
     ) -> SchwabTransaction:
         """Create and post process a SchwabTransaction."""
         transaction = SchwabTransaction(row, file)
@@ -171,47 +172,103 @@ class SchwabTransaction(BrokerTransaction):
         return transaction
 
 
+HEADERS = [
+    "Date",
+    "Action",
+    "Symbol",
+    "Description",
+    "Quantity",
+    "Price",
+    "Fees & Comm",
+    "Amount",
+]
+FIELDS = frozenset(HEADERS)
+
+
+def read_schwab_transactions_csv(
+        transactions_file: str, awards_prices: AwardPrices,
+        ignore_stock_activity: bool = False
+) -> Sequence[SchwabTransaction]:
+    with Path(transactions_file).open(encoding="utf-8") as csv_file:
+        lines = list(csv.reader(csv_file))
+
+        if lines[0] != HEADERS:
+            raise ParsingError(
+                transactions_file,
+                "First line of Schwab transactions file must be something like "
+                "'Transactions for account ...'",
+            )
+
+        if len(lines[1]) < 8 or len(lines[1]) > 9:
+            raise ParsingError(
+                transactions_file,
+                "Second line of Schwab transactions file must be a header"
+                " with 8 columns",
+            )
+
+        # Remove header
+        lines = lines[1:]
+        rows: list[dict[str, str]] = []
+        for line in lines:
+            if len(line) < 8 or len(line) > 9:
+                # Old transactions had empty 9th column.
+                raise UnexpectedColumnCountError(line, 8, transactions_file)
+
+            if len(line) == 9 and line[8] != "":
+                raise ParsingError(transactions_file, "Column 9 should be empty")
+
+            row = dict(zip(HEADERS, line))
+            rows.append(row)
+
+        transactions = [
+            SchwabTransaction.create(row, transactions_file, awards_prices)
+            for row in rows
+            if not ignore_stock_activity or row["Action"] != "Stock Plan Activity"
+        ]
+        transactions.reverse()
+        return list(transactions)
+
+
+def read_schwab_transactions_json(
+        transactions_file: str, awards_prices: AwardPrices,
+        ignore_stock_activity: bool = False,
+) -> Sequence[SchwabTransaction]:
+    with Path(transactions_file).open(encoding="utf-8") as json_file:
+        data = json.load(
+            json_file, parse_float=Decimal, parse_int=Decimal)
+
+        rows = data['BrokerageTransactions']
+        for i, row in enumerate(rows, 1):
+            if not FIELDS.issubset(row.keys()):
+                raise ParsingError(
+                    transactions_file, f"Transaction #{i} does not have expected fields")
+
+        transactions = [
+            SchwabTransaction.create(row, transactions_file, awards_prices)
+            for row in rows
+            if not ignore_stock_activity or row["Action"] != "Stock Plan Activity"
+        ]
+        transactions.reverse()
+        return list(transactions)
+
+
 def read_schwab_transactions(
-    transactions_file: str, schwab_award_transactions_file: str | None
-) -> list[BrokerTransaction]:
+    transactions_file: str, schwab_award_transactions_file: str | None,
+    ignore_stock_activity: bool = False
+) -> Sequence[BrokerTransaction]:
     """Read Schwab transactions from file."""
     awards_prices = _read_schwab_awards(schwab_award_transactions_file)
     try:
-        with Path(transactions_file).open(encoding="utf-8") as csv_file:
-            lines = list(csv.reader(csv_file))
+        if transactions_file.endswith(".json"):
+            transactions = read_schwab_transactions_json(
+                transactions_file, awards_prices,
+                ignore_stock_activity=ignore_stock_activity)
+        else:
+            transactions = read_schwab_transactions_csv(
+                transactions_file, awards_prices,
+                ignore_stock_activity=ignore_stock_activity)
 
-            headers = [
-                "Date",
-                "Action",
-                "Symbol",
-                "Description",
-                "Quantity",
-                "Price",
-                "Fees & Comm",
-                "Amount",
-            ]
-            if not lines[0] == headers:
-                raise ParsingError(
-                    transactions_file,
-                    "First line of Schwab transactions file must be something like "
-                    "'Transactions for account ...'",
-                )
-
-            if len(lines[1]) < 8 or len(lines[1]) > 9:
-                raise ParsingError(
-                    transactions_file,
-                    "Second line of Schwab transactions file must be a header"
-                    " with 8 columns",
-                )
-
-            # Remove header
-            lines = lines[1:]
-            transactions = [
-                SchwabTransaction.create(row, transactions_file, awards_prices)
-                for row in lines
-            ]
-            transactions.reverse()
-            return list(transactions)
+        return transactions
     except FileNotFoundError:
         print(f"WARNING: Couldn't locate Schwab transactions file({transactions_file})")
         return []
