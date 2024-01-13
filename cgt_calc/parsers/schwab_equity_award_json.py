@@ -22,7 +22,7 @@ from pandas.tseries.offsets import CustomBusinessDay  # type: ignore
 from cgt_calc.const import TICKER_RENAMES
 from cgt_calc.exceptions import ParsingError
 from cgt_calc.model import ActionType, BrokerTransaction
-from cgt_calc.util import round_decimal
+from cgt_calc.util import round_decimal, decimal_from_number_or_str, decimal_from_str
 
 # Delay between a (sale) trade, and when it is settled.
 SETTLEMENT_DELAY = 2 * CustomBusinessDay(calendar=USFederalHolidayCalendar())
@@ -94,36 +94,6 @@ def action_from_str(label: str) -> ActionType:
     raise ParsingError("schwab transactions", f"Unknown action: {label}")
 
 
-def _decimal_from_str(price_str: str) -> Decimal:
-    """Convert a number as string to a Decimal.
-
-    Remove $ sign, and comma thousand separators so as to handle dollar amounts
-    such as "$1,250.00".
-    """
-    return Decimal(price_str.replace("$", "").replace(",", ""))
-
-
-def _decimal_from_number_or_str(
-    row: JsonRowType,
-    field_basename: str,
-    field_float_suffix: str = "SortValue",
-) -> Decimal:
-    """Get a number from a row, preferably from the number field.
-
-    Fall back to the string representation field, or default to Decimal(0)
-    if the fields are not there or both have a value of None.
-    """
-    # We prefer native number to strings as more efficient/safer parsing
-    float_name = f"{field_basename}{field_float_suffix}"
-    if float_name in row and row[float_name] is not None:
-        return Decimal(row[float_name])
-
-    if field_basename in row and row[field_basename] is not None:
-        return _decimal_from_str(row[field_basename])
-
-    return Decimal(0)
-
-
 def _is_integer(number: Decimal) -> bool:
     return number % 1 == 0
 
@@ -142,9 +112,9 @@ class SchwabTransaction(BrokerTransaction):
         action = action_from_str(self.raw_action)
         symbol = row.get("symbol")
         symbol = TICKER_RENAMES.get(symbol, symbol)
-        quantity = _decimal_from_number_or_str(row, "quantity")
-        amount = _decimal_from_number_or_str(row, "amount")
-        fees = _decimal_from_number_or_str(row, "totalCommissionsAndFees")
+        quantity = decimal_from_number_or_str(row, "quantity")
+        amount = decimal_from_number_or_str(row, "amount")
+        fees = decimal_from_number_or_str(row, "totalCommissionsAndFees")
         if row["action"] == "Deposit":
             if len(row["transactionDetails"]) != 1:
                 raise ParsingError(
@@ -156,7 +126,7 @@ class SchwabTransaction(BrokerTransaction):
                 row["transactionDetails"][0]["vestDate"], "%m/%d/%Y"
             ).date()
             # Schwab only provide this one as string:
-            price = _decimal_from_str(
+            price = decimal_from_str(
                 row["transactionDetails"][0]["vestFairMarketValue"]
             )
             if amount == Decimal(0):
@@ -186,7 +156,7 @@ class SchwabTransaction(BrokerTransaction):
                 for subtransac in row["transactionDetails"]:
                     if "shares" in subtransac:
                         # Schwab only provides this one as a string:
-                        shares = _decimal_from_str(subtransac["shares"])
+                        shares = decimal_from_str(subtransac["shares"])
                         subtransac_shares_sum += shares
                         if not _is_integer(shares):
                             found_share_decimals = True
@@ -203,7 +173,7 @@ class SchwabTransaction(BrokerTransaction):
                     # We can only work-out the correct quantity if all
                     # sub-transactions have the same price:
                     price_str = row["transactionDetails"][0]["salePrice"]
-                    price = _decimal_from_str(price_str)
+                    price = decimal_from_str(price_str)
 
                     for subtransac in row["transactionDetails"][1:]:
                         if subtransac["salePrice"] != price_str:

@@ -8,56 +8,6 @@ from cgt_calc.model import ActionType
 from cgt_calc.parsers import schwab_equity_award_json
 
 
-def test_decimal_from_str() -> None:
-    """Test _decimal_from_str()."""
-    assert schwab_equity_award_json._decimal_from_str(  # pylint: disable=W0212
-        "$123,456.23"
-    ) == Decimal("123456.23")
-
-
-def test_decimal_from_number_or_str_both() -> None:
-    """Test _decimal_from_number_or_str() on float."""
-    assert (
-        schwab_equity_award_json._decimal_from_number_or_str(  # pylint: disable=W0212
-            {"key": "123.45", "keySortValue": Decimal("67.89")}, "key"
-        )
-        == Decimal("67.89")
-    )
-
-
-def test_decimal_from_number_or_str_float_null() -> None:
-    """Test _decimal_from_number_or_str() on None float."""
-    assert (
-        schwab_equity_award_json._decimal_from_number_or_str(  # pylint: disable=W0212
-            {"key": "67.89", "keySortValue": None}, "key"
-        )
-        == Decimal("67.89")
-    )
-
-
-def test_decimal_from_number_or_str_float_custom_suffix() -> None:
-    """Test _decimal_from_number_or_str_default_suffix() on float.
-
-    With a custom suffix.
-    """
-    assert (
-        schwab_equity_award_json._decimal_from_number_or_str(  # pylint: disable=W0212
-            {"keyMySuffix": Decimal("67.89")}, "key", "MySuffix"
-        )
-        == Decimal("67.89")
-    )
-
-
-def test_decimal_from_number_or_str_default() -> None:
-    """Test _decimal_from_number_or_str() with absent keys."""
-    assert (
-        schwab_equity_award_json._decimal_from_number_or_str(  # pylint: disable=W0212
-            {"key": "123.45", "keySortValue": 67.89}, "otherkey"
-        )
-        == Decimal("0")
-    )
-
-
 def test_schwab_transaction() -> None:
     """Test read_schwab_equity_award_json_transactions()."""
     transactions = schwab_equity_award_json.read_schwab_equity_award_json_transactions(
