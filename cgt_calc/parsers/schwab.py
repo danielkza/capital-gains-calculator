@@ -217,6 +217,9 @@ def read_schwab_transactions_csv(
             if len(line) == 9 and line[8] != "":
                 raise ParsingError(transactions_file, "Column 9 should be empty")
 
+            if line[0] == "Transactions Total":
+                continue
+
             row = dict(zip(HEADERS, line))
             rows.append(row)
 

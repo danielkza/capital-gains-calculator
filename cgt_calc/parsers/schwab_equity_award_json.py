@@ -230,7 +230,7 @@ class SchwabTransaction(BrokerTransaction):
             broker,
         )
 
-        if symbol == 'GOOGL':
+        if symbol in ('GOOG', 'GOOGL'):
             self._normalize_googl_split()
 
     def _normalize_googl_split(self) -> None:
