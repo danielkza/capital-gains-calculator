@@ -1,0 +1,35 @@
+INFO: No schwab file provided
+INFO: No schwab Equity Award JSON file provided
+INFO: No trading212 folder provided
+INFO: No mssb folder provided
+INFO: No raw file provided
+First pass completed
+Final portfolio:
+  CRYPTO:ETH: 2.59
+  NASDAQ:FOO: 5.00
+  FundUK:FUND1: 50.00
+Final balance:
+  Sharesight: -17857.31 (GBP)
+  Sharesight: 7470.05 (USD)
+Dividends: £0.00
+Dividend taxes: £0.00
+Interest: £0.00
+Disposal proceeds: £12995.82
+
+
+Second pass completed
+Portfolio at the end of 2020/2021 tax year:
+  CRYPTO:ETH: 2.59, £5352.48
+  NASDAQ:FOO: 5.00, £968.97
+  FundUK:FUND1: 50.00, £13775.00
+For tax year 2020/2021:
+Number of disposals: 4
+Disposal proceeds: £12995.82
+Allowable costs: £11014.18
+Capital gain: £2176.98
+Capital loss: £195.34
+Total capital gain: £1981.64
+Taxable capital gain: £0
+
+Generate calculations report
+All done!

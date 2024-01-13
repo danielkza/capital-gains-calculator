@@ -5,11 +5,12 @@ import csv
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Final, Iterable, Iterator, List
+from typing import Any, Final, Iterable, Iterator, List
 
 from cgt_calc.const import TICKER_RENAMES
 from cgt_calc.exceptions import InvalidTransactionError, ParsingError
 from cgt_calc.model import ActionType, BrokerTransaction
+
 
 STOCK_ACTIVITY_COMMENT_MARKER: Final[str] = "Stock Activity"
 
@@ -28,8 +29,9 @@ def parse_decimal(val: str) -> Decimal:
         raise ValueError(f"Bad decimal: {val}") from None
 
 
-def maybe_decimal(val: str) -> Decimal | None:
+def maybe_decimal(row: dict[str, Any], key: str) -> Decimal | None:
     """Convert value to Decimal."""
+    val = row.get(key, None)
     return parse_decimal(val) if val else None
 
 
@@ -58,6 +60,9 @@ class RowIterator(Iterator[List[str]]):
         """Return an iterator for this object."""
         return self
 
+def get_currency(row_dict: dict[str, str]) -> str | None:
+    return row_dict.get("Currency") or row_dict.get("Instrument Currency")
+
 
 def parse_dividend_payments(
     rows: Iterator[list[str]],
@@ -85,14 +90,14 @@ def parse_dividend_payments(
         description = row_dict["Comments"]
         broker = "Sharesight"
 
-        currency = row_dict.get("Currency")
+        currency = get_currency(row_dict)
         # If we have a currency this is foreign income, otherwise it's local
         if currency:
             amount = parse_decimal(row_dict["Gross Amount"])
-            tax = maybe_decimal(row_dict["Foreign Tax Deducted"])
+            tax = maybe_decimal(row_dict, "Foreign Tax Deducted") or Decimal(0)
         else:
             amount = parse_decimal(row_dict["Gross Dividend"])
-            tax = maybe_decimal(row_dict["Tax Deducted"])
+            tax = maybe_decimal(row_dict, "Tax Deducted") or Decimal(0)
             # Local income must be in GBP, otherwise why are you using this tool?
             currency = "GBP"
 
@@ -180,6 +185,10 @@ def parse_trades(
             action = ActionType.BUY
         elif tpe == "Sell":
             action = ActionType.SELL
+        elif tpe == "Split":
+            action = ActionType.STOCK_SPLIT
+        elif tpe == "Cancellation":
+            action = ActionType.SELL
         else:
             raise ValueError(f"Unknown action: {tpe}")
 
@@ -187,12 +196,20 @@ def parse_trades(
         symbol = f"{market}:{row_dict['Code']}"
         trade_date = parse_date(row_dict["Date"])
         quantity = parse_decimal(row_dict["Quantity"])
-        price = parse_decimal(row_dict["Price *"])
-        fees = maybe_decimal(row_dict["Brokerage *"]) or Decimal(0)
-        currency = row_dict["Currency"]
+        price = maybe_decimal(row_dict, "Price")
+        if price is None:
+            price = maybe_decimal(row_dict, "Price *")
+        price = price or Decimal(0)
+
+        fees = maybe_decimal(row_dict, "Brokerage")
+        if fees is None:
+            fees = maybe_decimal(row_dict, "Brokerage *")
+        fees = fees or Decimal(0)
+
+        currency = get_currency(row_dict)
         description = row_dict["Comments"]
         broker = "Sharesight"
-        gbp_value = maybe_decimal(row_dict["Value"])
+        gbp_value = maybe_decimal(row_dict, "Value")
 
         # Sharesight's reports conventions are slightly different from our
         # conventions:
@@ -202,7 +219,7 @@ def parse_trades(
         # - Value provided is always in GBP
         # - Foreign exchange transactions are show as BUY and SELL
 
-        if market == "FX":
+        if market in ("FX", "CRYPTO"):
             # While Sharesight provides an exchange rate, it is not precise enough
             # for cryptocurrency transactions
             if not gbp_value:
@@ -226,7 +243,7 @@ def parse_trades(
             price=price,
             fees=fees,
             amount=amount,
-            currency=currency,
+            currency=currency or "GBP",
             broker=broker,
         )
 

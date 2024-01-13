@@ -4,8 +4,13 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
 
-def test_run_with_sharesight_files_no_balance_check() -> None:
+@pytest.mark.parametrize("test_case", [
+    "with_asterisks",
+    "without_asterisks",
+])
+def test_run_with_sharesight_files_no_balance_check(test_case: str, request: pytest.FixtureRequest) -> None:
     """Runs the script and verifies it doesn't fail."""
     cmd = [
         sys.executable,
@@ -14,16 +19,18 @@ def test_run_with_sharesight_files_no_balance_check() -> None:
         "--year",
         "2020",
         "--sharesight",
-        "tests/test_data/sharesight/",
+        f"tests/test_data/sharesight/{test_case}",
         "--no-pdflatex",
         "--no-balance-check",
     ]
     result = subprocess.run(cmd, check=True, capture_output=True)
     assert result.stderr == b"", "Run with example files generated errors"
+
+    test_name = "test_run_with_sharesight_files_no_balance_check"
     expected_file = (
         Path("tests")
         / "test_data"
-        / "test_run_with_sharesight_files_no_balance_check_output.txt"
+        / f"{test_name}_{test_case}_output.txt"
     )
     expected = expected_file.read_text()
     cmd_str = " ".join([param if param else "''" for param in cmd])
