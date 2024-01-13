@@ -53,19 +53,29 @@ def read_broker_transactions(
 ) -> list[BrokerTransaction]:
     """Read transactions for all brokers."""
     transactions = []
+
+    schwab_equity_transactions = None
+    if schwab_equity_award_json_transactions_file is not None:
+        schwab_equity_transactions = read_schwab_equity_award_json_transactions(
+            schwab_equity_award_json_transactions_file
+        )
+        transactions += schwab_equity_transactions
+    else:
+        print("INFO: No schwab Equity Award JSON file provided")
+
     if schwab_transactions_file is not None:
+        ignore_stock_activity = bool(schwab_equity_transactions)
+        if ignore_stock_activity:
+            print(
+                f"INFO: Schwab Equity Awards loaded, ignoring STOCK_ACTIVITY from "
+                f"{schwab_transactions_file}")
+
         transactions += read_schwab_transactions(
-            schwab_transactions_file, schwab_awards_transactions_file
+            schwab_transactions_file, schwab_awards_transactions_file,
+            ignore_stock_activity=ignore_stock_activity
         )
     else:
         print("INFO: No schwab file provided")
-
-    if schwab_equity_award_json_transactions_file is not None:
-        transactions += read_schwab_equity_award_json_transactions(
-            schwab_equity_award_json_transactions_file
-        )
-    else:
-        print("INFO: No schwab Equity Award JSON file provided")
 
     if trading212_transactions_folder is not None:
         transactions += read_trading212_transactions(trading212_transactions_folder)
@@ -88,6 +98,7 @@ def read_broker_transactions(
         print("INFO: No raw file provided")
 
     transactions.sort(key=lambda k: k.date)
+    import pprint; pprint.pprint(transactions)
     return transactions
 
 
