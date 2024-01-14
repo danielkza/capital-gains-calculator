@@ -185,8 +185,10 @@ def parse_trades(
             action = ActionType.BUY
         elif tpe == "Sell":
             action = ActionType.SELL
-        elif tpe in ("Split", "Bonus"):
-            action = ActionType.ADJUSTMENT
+        elif tpe == "Split":
+            action = ActionType.STOCK_SPLIT
+        elif tpe == "Bonus":
+            action = ActionType.TRANSFER
         elif tpe == "Cancellation":
             action = ActionType.PAYOUT
         elif tpe == "Merge":
