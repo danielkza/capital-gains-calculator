@@ -1,7 +1,29 @@
 """Utility functions."""
+
+from __future__ import annotations
+
 import decimal
 from decimal import Decimal
-from typing import Any
+from typing import Any, Iterable, Iterator
+
+class RowIterator(Iterator[list[str]]):
+    """Iterator for CSV rows that keeps track of line number."""
+
+    def __init__(self, rows: Iterable[list[str]]) -> None:
+        """Initialise RowIterator."""
+        self.rows = iter(rows)
+        self.line = 1
+
+    def __next__(self) -> list[str]:
+        """Produce next element and increment line number."""
+        elm = next(self.rows)
+        self.line += 1
+        return elm
+
+    def __iter__(self) -> RowIterator:
+        """Return an iterator for this object."""
+        return self
+
 
 
 def round_decimal(value: Decimal, digits: int = 0) -> Decimal:

@@ -5,11 +5,12 @@ import csv
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Any, Final, Iterable, Iterator, List
+from typing import Any, Final, Iterable, Iterator
 
 from cgt_calc.const import TICKER_RENAMES
 from cgt_calc.exceptions import InvalidTransactionError, ParsingError
 from cgt_calc.model import ActionType, BrokerTransaction
+from cgt_calc.util import RowIterator
 
 
 STOCK_ACTIVITY_COMMENT_MARKER: Final[str] = "Stock Activity"
@@ -41,24 +42,6 @@ class SharesightTransaction(BrokerTransaction):
     Just a marker type for now
     """
 
-
-class RowIterator(Iterator[List[str]]):
-    """Iterator for CSV rows that keeps track of line number."""
-
-    def __init__(self, rows: Iterable[list[str]]) -> None:
-        """Initialise RowIterator."""
-        self.rows = iter(rows)
-        self.line = 1
-
-    def __next__(self) -> list[str]:
-        """Produce next element and increment line number."""
-        elm = next(self.rows)
-        self.line += 1
-        return elm
-
-    def __iter__(self) -> RowIterator:
-        """Return an iterator for this object."""
-        return self
 
 def get_currency(row_dict: dict[str, str]) -> str | None:
     return row_dict.get("Currency") or row_dict.get("Instrument Currency")
