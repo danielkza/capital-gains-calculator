@@ -193,7 +193,7 @@ class CapitalGainsCalculator:
             new_balance = balance[(transaction.broker, transaction.currency)]
             if transaction.action is ActionType.TRANSFER:
                 new_balance += get_amount_or_fail(transaction)
-            elif transaction.action in [ActionType.BUY, ActionType.MERGE]:
+            elif transaction.action == ActionType.BUY:
                 new_balance += get_amount_or_fail(transaction)
                 self.add_acquisition(portfolio, acquisition_list, transaction)
             elif transaction.action in [ActionType.SELL, ActionType.PAYOUT]:
@@ -223,6 +223,7 @@ class CapitalGainsCalculator:
                 ActionType.SPIN_OFF,
                 ActionType.REINVEST_SHARES,
                 ActionType.STOCK_SPLIT,
+                ActionType.MERGE,
             ]:
                 self.add_acquisition(portfolio, acquisition_list, transaction)
             elif transaction.action in [ActionType.DIVIDEND, ActionType.CAPITAL_GAIN]:
@@ -677,6 +678,7 @@ def main() -> int:
         args.mssb,
         args.sharesight,
         args.raw,
+        args.vanguard,
     )
     converter = CurrencyConverter(args.exchange_rates_file)
     initial_prices = InitialPrices(read_initial_prices(args.initial_prices))

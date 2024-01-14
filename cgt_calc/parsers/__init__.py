@@ -10,6 +10,7 @@ from pathlib import Path
 from cgt_calc.const import DEFAULT_INITIAL_PRICES_FILE
 from cgt_calc.exceptions import UnexpectedColumnCountError
 from cgt_calc.model import BrokerTransaction
+from cgt_calc.parsers.vanguard import read_vanguard_transactions
 from cgt_calc.resources import RESOURCES_PACKAGE
 
 from .mssb import read_mssb_transactions
@@ -50,6 +51,7 @@ def read_broker_transactions(
     mssb_transactions_folder: str | None,
     sharesight_transactions_folder: str | None,
     raw_transactions_file: str | None,
+    vanguard_transactions_file: str | None,
 ) -> list[BrokerTransaction]:
     """Read transactions for all brokers."""
     transactions = []
@@ -97,8 +99,12 @@ def read_broker_transactions(
     else:
         print("INFO: No raw file provided")
 
+    if vanguard_transactions_file is not None:
+        transactions += read_vanguard_transactions(vanguard_transactions_file)
+    else:
+        print("INFO: No vanguard file provided")
+
     transactions.sort(key=lambda k: k.date)
-    import pprint; pprint.pprint(transactions)
     return transactions
 
 
