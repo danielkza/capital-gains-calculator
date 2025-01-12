@@ -24,6 +24,7 @@ from typing import Any, Final
 from cgt_calc.const import TICKER_RENAMES
 from cgt_calc.exceptions import ParsingError
 from cgt_calc.model import ActionType, BrokerTransaction
+from cgt_calc.parsers.schwab_util import AwardPrices
 from cgt_calc.util import round_decimal
 
 OPTIONAL_DETAILS_NAME: Final = "Details"
@@ -49,10 +50,12 @@ class FieldNames:
     shares: str = "Shares"
     vest_date: str = "VestDate"
     vest_fair_market_value: str = "VestFairMarketValue"
+    fair_market_value: str = "FairMarketValuePrice"
     award_date: str = "AwardDate"
     award_id: str = "AwardId"
     date: str = "Date"
     sale_price: str = "SalePrice"
+    net_shares_deposited: str = "NetSharesDeposited"
 
     def __post_init__(self, schema_version: int) -> None:
         """Set correct field names if the schema is not the default one.
@@ -71,11 +74,12 @@ class FieldNames:
             self.shares = "shares"
             self.vest_date = "vestDate"
             self.vest_fair_market_value = "vestFairMarketValue"
+            self.fair_market_value = "fairMarketValuePrice"
             self.award_date = "awardDate"
             self.award_id = "awardName"
             self.date = "eventDate"
             self.sale_price = "salePrice"
-
+            self.net_shares_deposited: str = "netSharesDeposited"
 
 # We want enough decimals to cover what Schwab gives us (up to 4 decimals)
 # divided by the share-split factor (20), so we keep 6 decimals.
@@ -108,7 +112,7 @@ def action_from_str(label: str) -> ActionType:
     }:
         return ActionType.TRANSFER
 
-    if label in {"Stock Plan Activity", "Deposit"}:
+    if label in {"Stock Plan Activity", "Deposit", "Lapse"}:
         return ActionType.STOCK_ACTIVITY
 
     if label in ["Qualified Dividend", "Cash Dividend"]:
@@ -189,17 +193,11 @@ class SchwabTransaction(BrokerTransaction):
         action = action_from_str(self.raw_action)
         symbol = row.get(names.symbol)
         symbol = TICKER_RENAMES.get(symbol, symbol)
-        if symbol != "GOOG":
-            # Stock split hardcoded for GOOG
-            raise ParsingError(
-                file,
-                f"Schwab Equity Award JSON only supports GOOG stock but found {symbol}",
-            )
         quantity = _decimal_from_number_or_str(row, names.quantity)
         initially_parsed_amount = _decimal_from_number_or_str(row, names.amount)
         amount = initially_parsed_amount
         fees = _decimal_from_number_or_str(row, names.fees)
-        if row[names.action] == "Deposit":
+        if action == ActionType.STOCK_ACTIVITY:
             if len(row[names.transac_details]) != 1:
                 raise ParsingError(
                     file,
@@ -210,11 +208,27 @@ class SchwabTransaction(BrokerTransaction):
                 details = row[names.transac_details][0]["Details"]
             else:
                 details = row[names.transac_details][0]
-            date = datetime.datetime.strptime(
-                details[names.vest_date], "%m/%d/%Y"
-            ).date()
+                
+            try:
+                date = datetime.datetime.strptime(
+                    details[names.vest_date], "%m/%d/%Y"
+                ).date()
+            except KeyError:
+                date = datetime.datetime.strptime(
+                    row[names.date], "%m/%d/%Y"
+                ).date()
+                
+            try:
+                quantity = _decimal_from_number_or_str(details, names.net_shares_deposited)
+            except KeyError:
+                pass
+
             # Schwab only provide this one as string:
-            price = _decimal_from_str(details[names.vest_fair_market_value])
+            try:
+                price = _decimal_from_str(details[names.vest_fair_market_value])
+            except KeyError:
+                price = _decimal_from_str(details[names.fair_market_value])
+
             if amount == Decimal(0):
                 amount = price * quantity
             description = (
@@ -222,7 +236,7 @@ class SchwabTransaction(BrokerTransaction):
                 f"{details[names.award_date]} "
                 f"(ID {details[names.award_id]})"
             )
-        elif row[names.action] == "Sale":
+        elif action == ActionType.SELL:
             date = datetime.datetime.strptime(row[names.date], "%m/%d/%Y").date()
 
             # Schwab's data export sometimes lacks decimals on Sales
@@ -335,51 +349,71 @@ class SchwabTransaction(BrokerTransaction):
             and self.price
             and self.price > threshold_price
             and self.quantity
+            and self.symbol == "GOOG"
         ):
             self.price = round_decimal(self.price / split_factor, ROUND_DIGITS)
             self.quantity = round_decimal(self.quantity * split_factor, ROUND_DIGITS)
 
 
 def read_schwab_equity_award_json_transactions(
-    transactions_file: str,
-) -> list[BrokerTransaction]:
+    transactions_file: str | None, transactions_folder: str | None,
+) -> tuple[list[BrokerTransaction], AwardPrices]:
     """Read Schwab transactions from file."""
-    try:
-        with Path(transactions_file).open(encoding="utf-8") as json_file:
-            try:
-                data = json.load(json_file, parse_float=Decimal, parse_int=Decimal)
-            except json.decoder.JSONDecodeError as exception:
-                raise ParsingError(
-                    transactions_file,
-                    "Cloud not parse content as JSON",
-                ) from exception
 
-            for field_name, schema_version in FIELD_TO_SCHEMA.items():
-                if field_name in data:
-                    fields = FieldNames(schema_version)
-                    break
-            if not fields:
-                raise ParsingError(
-                    transactions_file,
-                    f"Expected top level field ({', '.join(FIELD_TO_SCHEMA.keys())}) "
-                    "not found: the JSON data is not in the expected format",
-                )
+    files: list[str] = []
+    if transactions_file:
+        files.append(transactions_file)
+        
+    if transactions_folder:
+        files.extend(Path(transactions_folder).glob("*.json"))
 
-            if not isinstance(data[fields.transactions], list):
-                raise ParsingError(
-                    transactions_file,
-                    f"'{fields.transactions}' is not a list: the JSON data is not "
-                    "in the expected format",
-                )
+    all_transactions: list[SchwabTransaction] = []
+    for file in files:
+        try:
+            with Path(file).open(encoding="utf-8") as json_file:
+                try:
+                    data = json.load(json_file, parse_float=Decimal, parse_int=Decimal)
+                except json.decoder.JSONDecodeError as exception:
+                    raise ParsingError(
+                        transactions_file,
+                        "Could not parse content as JSON",
+                    ) from exception
 
-            transactions = [
-                SchwabTransaction(transac, transactions_file, fields)
-                for transac in data[fields.transactions]
-                # Skip as not relevant for CGT
-                if transac[fields.action] not in {"Journal", "Wire Transfer"}
-            ]
-            transactions.reverse()
-            return list(transactions)
-    except FileNotFoundError:
-        print(f"WARNING: Couldn't locate Schwab transactions file({transactions_file})")
-        return []
+                for field_name, schema_version in FIELD_TO_SCHEMA.items():
+                    if field_name in data:
+                        fields = FieldNames(schema_version)
+                        break
+                if not fields:
+                    raise ParsingError(
+                        transactions_file,
+                        f"Expected top level field ({', '.join(FIELD_TO_SCHEMA.keys())}) "
+                        "not found: the JSON data is not in the expected format",
+                    )
+
+                if not isinstance(data[fields.transactions], list):
+                    raise ParsingError(
+                        transactions_file,
+                        f"'{fields.transactions}' is not a list: the JSON data is not "
+                        "in the expected format",
+                    )
+
+                transactions = [
+                    SchwabTransaction(transac, transactions_file, fields)
+                    for transac in data[fields.transactions]
+                    # Skip as not relevant for CGT
+                    if transac[fields.action] not in {"Journal", "Wire Transfer"}
+                ]
+                transactions.reverse()
+                all_transactions.extend(transactions)
+        except FileNotFoundError:
+            print(f"WARNING: Couldn't locate Schwab transactions file({transactions_file})")
+    
+    all_transactions.sort(key=lambda k: k.date)
+    
+    award_prices_dict: dict[datetime.date, dict[str, Decimal]] = {}
+    for transaction in all_transactions:
+        dt = award_prices_dict.setdefault(transaction.date, {})
+        dt[transaction.symbol] = transaction.price
+        
+    award_prices = AwardPrices(award_prices_dict)
+    return all_transactions, award_prices

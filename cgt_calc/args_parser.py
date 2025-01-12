@@ -43,6 +43,12 @@ def create_parser() -> argparse.ArgumentParser:
         help="file containing the exported transactions from Charles Schwab",
     )
     parser.add_argument(
+        "--schwab-folder",
+        type=str,
+        nargs="?",
+        help="folder containing the exported transactions from Charles Schwab",
+    )
+    parser.add_argument(
         "--schwab-award",
         type=str,
         default=None,
@@ -50,7 +56,25 @@ def create_parser() -> argparse.ArgumentParser:
         help="file containing schwab award data for stock prices",
     )
     parser.add_argument(
+        "--schwab-award-folder",
+        type=str,
+        default=None,
+        nargs="?",
+        help="folder containing schwab award data for stock prices",
+    )
+    parser.add_argument(
         "--schwab_equity_award_json",
+        "--schwab-equity-award-json",
+        dest="schwab_equity_award_json",
+        type=str,
+        default=None,
+        nargs="?",
+        help="file containing schwab equity award transactions data in JSON format",
+    )
+    parser.add_argument(
+        "--schwab_equity_award_json-folder",
+        "--schwab-equity-award-json-folder",
+        dest="schwab_equity_award_json_folder",
         type=str,
         default=None,
         nargs="?",

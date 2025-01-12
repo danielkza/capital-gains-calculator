@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from collections import OrderedDict, defaultdict
 import csv
-from dataclasses import dataclass
 import datetime
 from decimal import Decimal
 from enum import Enum
+from itertools import chain
 from pathlib import Path
 from typing import Final
 
@@ -19,6 +19,8 @@ from cgt_calc.exceptions import (
     UnexpectedRowCountError,
 )
 from cgt_calc.model import ActionType, BrokerTransaction
+from cgt_calc.parsers.schwab_equity_award_json import read_schwab_equity_award_json_transactions
+from cgt_calc.parsers.schwab_util import AwardPrices
 
 OLD_COLUMNS_NUM: Final = 9
 NEW_COLUMNS_NUM: Final = 8
@@ -45,29 +47,6 @@ class AwardsTransactionsFileRequiredHeaders(str, Enum):
     FAIR_MARKET_VALUE_PRICE = "FairMarketValuePrice"
 
 
-@dataclass
-class AwardPrices:
-    """Class to store initial stock prices."""
-
-    award_prices: dict[datetime.date, dict[str, Decimal]]
-
-    def get(self, date: datetime.date, symbol: str) -> tuple[datetime.date, Decimal]:
-        """Get initial stock price at given date."""
-        # Award dates may go back for few days, depending on
-        # holidays or weekends, so we do a linear search
-        # in the past to find the award price
-        symbol = TICKER_RENAMES.get(symbol, symbol)
-        for i in range(7):
-            to_search = date - datetime.timedelta(days=i)
-
-            if (
-                to_search in self.award_prices
-                and symbol in self.award_prices[to_search]
-            ):
-                return (to_search, self.award_prices[to_search][symbol])
-        raise KeyError(f"Award price is not found for symbol {symbol} for date {date}")
-
-
 def action_from_str(label: str) -> ActionType:
     """Convert string label to ActionType."""
     if label == "Buy":
@@ -91,7 +70,7 @@ def action_from_str(label: str) -> ActionType:
     ]:
         return ActionType.TRANSFER
 
-    if label == "Stock Plan Activity":
+    if label in "Stock Plan Activity":
         return ActionType.STOCK_ACTIVITY
 
     if label in [
@@ -235,6 +214,7 @@ class SchwabTransaction(BrokerTransaction):
             # for awards which don't match the PDF statements.
             # We want to make sure to match date and price form the awards
             # spreadsheet.
+            
             transaction.date, transaction.price = awards_prices.get(
                 transaction.date, symbol
             )
@@ -276,40 +256,77 @@ def _unify_schwab_cash_merger_trxs(
 
 
 def read_schwab_transactions(
-    transactions_file: str, schwab_award_transactions_file: str | None
+    transactions_file: str | None,
+    transactions_folder: str | None,
+    schwab_award_transactions_file: str | None,
+    schwab_award_transactions_folder: str | None,
+    award_prices: AwardPrices = AwardPrices({}),
 ) -> list[BrokerTransaction]:
     """Read Schwab transactions from file."""
-    awards_prices = _read_schwab_awards(schwab_award_transactions_file)
-    try:
-        with Path(transactions_file).open(encoding="utf-8") as csv_file:
-            lines = list(csv.reader(csv_file))
-            headers = lines[0]
+    
+    awards_prices = award_prices.merge(_read_schwab_awards_all(schwab_award_transactions_file, schwab_award_transactions_folder))
 
-            required_headers = set(
-                {header.value for header in SchwabTransactionsFileRequiredHeaders}
-            )
-            if not required_headers.issubset(headers):
-                raise ParsingError(
-                    transactions_file,
-                    "Missing columns in Schwab transaction file: "
-                    f"{required_headers.difference(headers)}",
-                )
+    files: list[str] = []
+    if transactions_file:
+        files.append(transactions_file)
+        
+    if transactions_folder:
+        files.extend(Path(transactions_folder).glob("*.csv"))
 
-            # Remove header
-            lines = lines[1:]
-            transactions = [
-                SchwabTransaction.create(
-                    OrderedDict(zip(headers, row)), transactions_file, awards_prices
+    all_transactions: list[SchwabTransaction] = []
+    
+    for file in files:
+        print(f"Parsing {file}")
+        try:
+            with Path(file).open(encoding="utf-8") as csv_file:
+                lines = list(csv.reader(csv_file))
+                headers = lines[0]
+
+                required_headers = set(
+                    {header.value for header in SchwabTransactionsFileRequiredHeaders}
                 )
-                for row in lines
-                if any(row)
-            ]
-            transactions = _unify_schwab_cash_merger_trxs(transactions)
-            transactions.reverse()
-            return list(transactions)
-    except FileNotFoundError:
-        print(f"WARNING: Couldn't locate Schwab transactions file({transactions_file})")
-        return []
+                if not required_headers.issubset(headers):
+                    raise ParsingError(
+                        transactions_file,
+                        "Missing columns in Schwab transaction file: "
+                        f"{required_headers.difference(headers)}",
+                    )
+
+                # Remove header
+                lines = lines[1:]
+                transactions = [
+                    SchwabTransaction.create(
+                        OrderedDict(zip(headers, row)), transactions_file, awards_prices
+                    )
+                    for row in lines
+                    if any(row)
+                ]
+                transactions = _unify_schwab_cash_merger_trxs(transactions)
+                transactions.reverse()
+                all_transactions.extend(transactions)
+        except FileNotFoundError:
+            print(f"WARNING: Couldn't locate Schwab transactions file({file})")
+
+    all_transactions.sort(key=lambda k: k.date)
+    return all_transactions
+
+
+def _read_schwab_awards_all(
+    schwab_award_transactions_file: str | None,
+    schwab_award_transactions_folder: str | None,
+) -> AwardPrices:
+    files: list[str] = []
+    if schwab_award_transactions_file:
+        files.append(schwab_award_transactions_file)
+        
+    if schwab_award_transactions_folder:
+        files.extend(Path(schwab_award_transactions_folder).glob("*.csv"))
+        
+    award_prices = AwardPrices(award_prices={})
+    for file in files:
+        award_prices = award_prices.merge(_read_schwab_awards(file))
+        
+    return award_prices
 
 
 def _read_schwab_awards(
@@ -388,3 +405,52 @@ def _read_schwab_awards(
             symbol = TICKER_RENAMES.get(symbol, symbol)
             initial_prices[date][symbol] = price
     return AwardPrices(award_prices=dict(initial_prices))
+
+def read_schwab_combined_transactions(
+    schwab_transactions_file: str | None,
+    schwab_transactions_folder: str | None,
+    schwab_awards_transactions_file: str | None,
+    schwab_awards_transactions_folder: str | None,
+    schwab_equity_award_json_transactions_file: str | None,
+    schwab_equity_award_json_transactions_folder: str | None,
+) -> list[BrokerTransaction]:    
+    equity_transactions: list[SchwabTransaction] = []
+    transactions: list[SchwabTransaction] = []
+
+    award_prices = AwardPrices({})
+    equity_awards_sym_dates: set[tuple[datetime.date, str]] = set()
+
+    if schwab_equity_award_json_transactions_file is not None or schwab_equity_award_json_transactions_folder is not None:
+        equity_transactions, award_prices = read_schwab_equity_award_json_transactions(
+            transactions_file=schwab_equity_award_json_transactions_file,
+            transactions_folder=schwab_equity_award_json_transactions_folder,
+        )
+        equity_awards_sym_dates = set((tr.date, tr.symbol) for tr in equity_transactions)
+    else:
+        print("INFO: No schwab Equity Award JSON file provided")
+        
+    if schwab_transactions_file is not None or schwab_transactions_folder is not None:
+        transactions = read_schwab_transactions(
+            transactions_file=schwab_transactions_file,
+            schwab_award_transactions_file=schwab_awards_transactions_file,
+            transactions_folder=schwab_transactions_folder,
+            schwab_award_transactions_folder=schwab_awards_transactions_folder,
+            award_prices=award_prices,
+        )
+    else:
+        print("INFO: No schwab file provided")
+    
+    if equity_transactions:
+        # If we have been provided Equity Awards data, we should ignore STOCK_ACTIVITY transactions
+        # from dates present in both. The Equity Awards data is more accurate.
+        
+        clean_transactions: list[SchwabTransaction] = []
+        for tr in transactions:
+            if (tr.date, tr.symbol) in equity_awards_sym_dates:
+                print(f"INFO: Removing STOCK_ACTIVITY transaction already present in Equity Awards data: {tr.symbol}:{tr.date}:{tr.quantity}")
+            else:
+                clean_transactions.append(tr)
+        
+        transactions = sorted(chain(equity_transactions, clean_transactions),  key=lambda k: k.date)
+    
+    return transactions

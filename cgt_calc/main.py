@@ -828,14 +828,18 @@ def main() -> int:
 
     # Read data from input files
     broker_transactions = read_broker_transactions(
-        args.schwab,
-        args.schwab_award,
-        args.schwab_equity_award_json,
-        args.trading212,
-        args.mssb,
-        args.sharesight,
-        args.raw,
+        schwab_transactions_file=args.schwab,
+        schwab_transactions_folder=args.schwab_folder,
+        schwab_awards_transactions_file=args.schwab_award,
+        schwab_awards_transactions_folder=args.schwab_award_folder,
+        schwab_equity_award_json_transactions_file=args.schwab_equity_award_json,
+        schwab_equity_award_json_transactions_folder=args.schwab_equity_award_json_folder,
+        trading212_transactions_folder=args.trading212,
+        mssb_transactions_folder=args.mssb,
+        sharesight_transactions_folder=args.sharesight,
+        raw_transactions_file=args.raw,
     )
+    
     converter = CurrencyConverter(args.exchange_rates_file)
     initial_prices = InitialPrices(read_initial_prices(args.initial_prices))
     price_fetcher = CurrentPriceFetcher(converter)
@@ -858,7 +862,6 @@ def main() -> int:
     calculator.convert_to_hmrc_transactions(broker_transactions)
     # Second pass calculates capital gain tax for the given tax year.
     report = calculator.calculate_capital_gain()
-    print(report)
 
     # Generate PDF report.
     if not args.no_report:
